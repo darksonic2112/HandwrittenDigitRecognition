@@ -1,104 +1,67 @@
+import numpy as np
 import tensorflow as tf
-import tensorflow_datasets as tfds
-import matplotlib.pyplot as plt
+import os
+from tensorflow.keras.datasets import mnist
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.callbacks import ModelCheckpoint
 
-# Load MNIST dataset
-(ds_train, ds_test), ds_info = tfds.load(
-    'mnist',
-    split=['train', 'test'],
-    shuffle_files=True,
-    as_supervised=True,
-    with_info=True,
-)
+# Data Preprocessing
+(x_train, y_train), (x_test, y_test) = mnist.load_data()
 
-# Define normalization function
-def normalize_img(image, label):
-    return tf.cast(image, tf.float32) / 255., label
+# Normalize the image data
+x_train = x_train.astype('float32') / 255.0
+x_test = x_test.astype('float32') / 255.0
 
-# Split training set into training and validation sets
-train_size = int(0.8 * ds_info.splits['train'].num_examples)
-ds_train_and_val = ds_train.shuffle(ds_info.splits['train'].num_examples)
+# Reshape the image data
+x_train = np.expand_dims(x_train, axis=-1)
+x_test = np.expand_dims(x_test, axis=-1)
 
-# Split into training and validation sets
-ds_train = ds_train_and_val.take(train_size)
-ds_val = ds_train_and_val.skip(train_size)
+# Convert labels to one-hot encoded vectors
+y_train = to_categorical(y_train, 10)
+y_test = to_categorical(y_test, 10)
 
-# Apply normalization to images
-ds_train = ds_train.map(normalize_img)
-ds_val = ds_val.map(normalize_img)
-
-# Batch datasets and prefetch
-batch_size = 128
-ds_train = ds_train.batch(batch_size).cache().prefetch(tf.data.AUTOTUNE)
-ds_val = ds_val.batch(batch_size).cache().prefetch(tf.data.AUTOTUNE)
-
-# Define model
-model = tf.keras.models.Sequential([
-    tf.keras.layers.Conv2D(32, (3, 3), activation='relu', input_shape=(28, 28, 1)),
-    tf.keras.layers.MaxPooling2D((2, 2)),
-    tf.keras.layers.Conv2D(64, (3, 3), activation='relu'),
-    tf.keras.layers.MaxPooling2D((2, 2)),
-    tf.keras.layers.Flatten(),
-    tf.keras.layers.Dense(128, activation='relu'),
-    tf.keras.layers.Dropout(0.5),
-    tf.keras.layers.Dense(10, activation='softmax')
+# Model Design
+model = Sequential([
+    Conv2D(32, (3, 3), activation='relu', input_shape=(28, 28, 1)),
+    MaxPooling2D((2, 2)),
+    Conv2D(64, (3, 3), activation='relu'),
+    MaxPooling2D((2, 2)),
+    Flatten(),
+    Dense(128, activation='relu'),
+    Dropout(0.5),  # Optional dropout layer
+    Dense(10, activation='softmax')
 ])
 
-# Compile model
-model.compile(
-    optimizer=tf.keras.optimizers.Adam(0.001),
-    loss=tf.keras.losses.SparseCategoricalCrossentropy(),
-    metrics=['accuracy']
-)
+# Compile the model
+model.compile(optimizer='adam',
+              loss='categorical_crossentropy',
+              metrics=['accuracy'])
 
-# ModelCheckpoint callback to save the best model
-checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-    filepath='best_model.keras',
+# Model Summary
+model.summary()
+
+# Specify the directory to save the model
+checkpoint_dir = './checkpoints'
+os.makedirs(checkpoint_dir, exist_ok=True)
+checkpoint_filepath = os.path.join(checkpoint_dir, 'best_model.keras')
+
+
+# Model Checkpointing
+model_checkpoint_callback = ModelCheckpoint(
+    filepath=checkpoint_filepath,
+    save_weights_only=False,
     monitor='val_accuracy',
-    save_best_only=True,
-    verbose=1
-)
+    mode='max',
+    save_best_only=True)
 
-# EarlyStopping callback to stop training if no improvement
-early_stopping_callback = tf.keras.callbacks.EarlyStopping(
-    monitor='val_loss',
-    patience=3,
-    verbose=1
-)
+# Training
+history = model.fit(x_train, y_train, epochs=50, batch_size=128, validation_split=0.2, callbacks=[model_checkpoint_callback])
 
-# Train model
-history = model.fit(
-    ds_train,
-    epochs=30,
-    validation_data=ds_val,  # Use validation data this time
-    callbacks=[checkpoint_callback, early_stopping_callback]
-)
-print("Training completed.")
+# Load the best model
+model = tf.keras.models.load_model(checkpoint_filepath)
 
-# Get training history
-training_loss = history.history['loss']
-training_accuracy = history.history['accuracy']
-validation_loss = history.history['val_loss']
-validation_accuracy = history.history['val_accuracy']
-epochs = range(1, len(training_loss) + 1)
-
-# Plot training and validation loss
-plt.figure(figsize=(12, 5))
-plt.subplot(1, 2, 1)
-plt.plot(epochs, training_loss, 'b', label='Training loss')
-plt.plot(epochs, validation_loss, 'r', label='Validation loss')
-plt.title('Training and Validation Loss')
-plt.xlabel('Epochs')
-plt.ylabel('Loss')
-plt.legend()
-
-# Plot training and validation accuracy
-plt.subplot(1, 2, 2)
-plt.plot(epochs, training_accuracy, 'b', label='Training accuracy')
-plt.plot(epochs, validation_accuracy, 'r', label='Validation accuracy')
-plt.title('Training and Validation Accuracy')
-plt.xlabel('Epochs')
-plt.ylabel('Accuracy')
-plt.legend()
-
-plt.show()
+# Evaluate on test set
+test_loss, test_accuracy = model.evaluate(x_test, y_test)
+print(f'Test accuracy: {test_accuracy}')
